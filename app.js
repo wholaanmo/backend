@@ -27,14 +27,33 @@ const groupBudgetRouter = require('./api/grp_expenses/group-budget.router');
 const photoRouter = require("./api/expenses/photos.router");
 const cors = require('cors')
 
+const allowedOrigins = [
+  'https://wholaanmo.github.io',
+  'http://localhost:5173'
+];
+
 app.use(cors({
-  origin: 'http://localhost:5173', 
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization'] 
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
+
+app.get('/api/db-test', async (req, res) => {
+  const [rows] = await connection.query('SELECT 1 + 1 AS result');
+  res.json(rows);
+});
 
 app.use((req, res, next) => {
   console.log(`Incoming ${req.method} request to: ${req.url}`);
