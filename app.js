@@ -16,6 +16,14 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+app.get('/api/healthcheck', (req, res) => {
+  console.log('Received headers:', req.headers);
+  res.json({
+    status: 'healthy',
+    timestamp: new Date(),
+    origin: req.headers.origin
+  });
+});
 
 //ROUTERS
 const userRouter = require("./api/users/user.router");
@@ -29,6 +37,7 @@ const cors = require('cors')
 
 const allowedOrigins = [
   'https://wholaanmo.github.io',
+  'https://wholaanmo.github.io/VUE-APP',
   'http://localhost:5173'
 ];
 
@@ -37,15 +46,19 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (allowedOrigins.some(allowedOrigin => 
+      origin === allowedOrigin || 
+      origin.startsWith(allowedOrigin)
+    )) {
       callback(null, true);
     } else {
+      console.log('CORS blocked for origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Add OPTIONS for preflight
   credentials: true,
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 app.use(express.json());
