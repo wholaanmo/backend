@@ -84,6 +84,10 @@ app.use('/api/grp_expenses', groupExpensesRouter);
 app.use('/api/grp_expenses', groupBudgetRouter);
 app.use('/api/photos', photoRouter);
 
+app.get('/', (req, res) => {
+  res.send('Backend is running');
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
