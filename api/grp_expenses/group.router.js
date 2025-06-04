@@ -11,66 +11,73 @@ router.use((req, res, next) => {
   });
 
   router.get('/user-notifications', checkToken, async (req, res) => {
+    let connection;
     try {
       const userId = req.user.userId;
+
+      if (!userId) {
+        return res.status(401).json({ 
+          success: 0, 
+          message: 'Unauthorized' 
+        });
+      }
       
-      // Get blocked notifications (no group membership check needed)
-      const [blocked] = await pool.query(
-        `SELECT 
-          b.id,
-          g.id as group_id,
-          g.group_name as groupName,
-          'blocked' as type,
-          b.blocked_at as timestamp,
-          b.reason,
-          u.username as admin_name,
-          a.username as blocked_by_name
-         FROM blocked_members b
-         JOIN groups g ON b.group_id = g.id
-         JOIN users u ON b.user_id = u.id
-         JOIN users a ON b.blocked_by = a.id
-         WHERE b.user_id = ? AND b.notification_read = 0
-         ORDER BY b.blocked_at DESC`,
-        [userId]
-      );
+      connection = await pool.getConnection();
 
-      // Get removal notifications (no group membership check needed)
-      const [removed] = await pool.query(
-        `SELECT 
-          r.id,
-          g.id as group_id,
-          g.group_name as groupName,
-          'removed' as type,
-          r.removed_at as timestamp,
-          r.reason,
-          u.username as admin_name,
-          a.username as removed_by_name
-         FROM member_removals r
-         JOIN groups g ON r.group_id = g.id
-         JOIN users u ON r.user_id = u.id
-         JOIN users a ON r.removed_by = a.id
-         WHERE r.user_id = ? AND r.notification_read = 0
-         ORDER BY r.removed_at DESC`,
-        [userId]
-      );
+    const [blocked] = await connection.query(
+      `SELECT 
+        b.id,
+        g.id as group_id,
+        g.group_name as groupName,
+        'blocked' as type,
+        b.blocked_at as timestamp,
+        b.reason,
+        u.username as admin_name,
+        a.username as blocked_by_name
+       FROM blocked_members b
+       JOIN groups g ON b.group_id = g.id
+       JOIN users u ON b.user_id = u.id
+       JOIN users a ON b.blocked_by = a.id
+       WHERE b.user_id = ? AND b.notification_read = 0
+       ORDER BY b.blocked_at DESC`,
+      [userId]
+    );
 
-      const notifications = [...blocked, ...removed]
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    const [removed] = await connection.query(
+      `SELECT 
+        r.id,
+        g.id as group_id,
+        g.group_name as groupName,
+        'removed' as type,
+        r.removed_at as timestamp,
+        r.reason,
+        u.username as admin_name,
+        a.username as removed_by_name
+       FROM member_removals r
+       JOIN groups g ON r.group_id = g.id
+       JOIN users u ON r.user_id = u.id
+       JOIN users a ON r.removed_by = a.id
+       WHERE r.user_id = ? AND r.notification_read = 0
+       ORDER BY r.removed_at DESC`,
+      [userId]
+    );
 
-      console.log('Fetched notifications:', notifications); // Add this for debugging
-
-      return res.json({
-        success: 1,
-        notifications
-      });
-    } catch (err) {
-      console.error('Get notifications error:', err);
-      return res.status(500).json({
-        success: 0,
-        message: "Failed to get notifications"
-      });
-    }
-  });
+    return res.json({
+      success: 1,
+      notifications: [...blocked, ...removed]
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    });
+  } catch (err) {
+    console.error('Get notifications error:', err);
+    return res.status(500).json({
+      success: 0,
+      message: "Failed to get notifications",
+      error: err.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
 
   router.post('/test-invite', (req, res) => {
     console.log('Test invite route hit');

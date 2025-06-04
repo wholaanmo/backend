@@ -16,7 +16,7 @@ module.exports = {
         
         // 1. Verify group exists and get group name
         const [groups] = await connection.query(
-          'SELECT id, group_name, group_code, created_by FROM groups WHERE id = ?',
+          'SELECT id, group_name, group_code, created_by FROM `groups` WHERE id = ?',
           [groupId]
       );
         
@@ -165,7 +165,7 @@ getPendingInvites: async (req, res) => {
     const [invites] = await pool.query(`
       SELECT pi.*, g.group_name, u.username as inviter_name
       FROM pending_invites pi
-      JOIN groups g ON pi.group_id = g.id
+      JOIN \`groups\` g ON pi.group_id = g.id
       JOIN users u ON g.created_by = u.id
       WHERE pi.email = ? AND pi.expires_at > NOW()
     `, [email]);
@@ -198,7 +198,7 @@ acceptInvite: async (req, res) => {
     const [invites] = await connection.query(
       `SELECT pi.*, g.group_name, g.id as group_id
        FROM pending_invites pi
-       JOIN groups g ON pi.group_id = g.id
+       JOIN \`groups\` g ON pi.group_id = g.id
        WHERE pi.token = ? AND pi.expires_at > NOW()`,
       [token]
     );
@@ -290,35 +290,43 @@ acceptInvite: async (req, res) => {
   }
 },
 
-  getUserGroups: async (req, res) => {
-    let connection;
-    try {
-      connection = await pool.getConnection();
-      const userId = req.user.userId;
-      
-      const [groups] = await pool.query(`
-        SELECT g.*, 
-          (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count
-        FROM groups g
-        JOIN group_members gm ON g.id = gm.group_id
-        WHERE gm.user_id = ?
-        ORDER BY g.created_at DESC
-      `, [userId]);
-  
-      return res.json({
-        success: 1,
-        data: groups
-      });
-    } catch (err) {
-      console.error("Get user groups error:", err);
-      return res.status(500).json({
+getUserGroups: async (req, res) => {
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    const userId = req.user.userId;
+
+    if (!userId) {
+      return res.status(401).json({
         success: 0,
-        message: "Failed to fetch user groups"
+        message: "Unauthorized - User ID missing"
       });
-    } finally {
-      if (connection) connection.release();
     }
-  },
+
+    const [groups] = await connection.query(`
+      SELECT g.*, 
+        (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count
+      FROM \`groups\` g
+      JOIN group_members gm ON g.id = gm.group_id
+      WHERE gm.user_id = ?
+      ORDER BY g.created_at DESC
+    `, [userId]);
+
+    return res.json({
+      success: 1,
+      data: groups
+    });
+  } catch (err) {
+    console.error("Get user groups error:", err);
+    return res.status(500).json({
+      success: 0,
+      message: "Failed to fetch user groups",
+      error: err.message // Include error message for debugging
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+},
 
   createGroup: async (req, res) => {
     try {
@@ -376,7 +384,7 @@ acceptInvite: async (req, res) => {
   
       // Find group by code
       const [groups] = await pool.query(
-        'SELECT id FROM groups WHERE group_code = ?',
+        'SELECT id FROM `groups` WHERE group_code = ?',
         [groupCode]
       );
       
@@ -587,7 +595,7 @@ rejectRequest: async (req, res) => {
       connection = await pool.getConnection();
       
       const [group] = await connection.query(
-        'SELECT id, group_name, group_code, created_by, created_at FROM groups WHERE id = ?',
+        'SELECT id, group_name, group_code, created_by, created_at FROM `groups` WHERE id = ?',
         [groupId]
       );
       
@@ -641,7 +649,7 @@ try {
       
       // Then delete the group
       await connection.query(
-        'DELETE FROM groups WHERE id = ?',
+        'DELETE FROM `groups` WHERE id = ?',
         [groupId]
       );
       
