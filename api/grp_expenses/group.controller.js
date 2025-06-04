@@ -295,15 +295,8 @@ getUserGroups: async (req, res) => {
   try {
     connection = await pool.getConnection();
     const userId = req.user.userId;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: 0,
-        message: "Unauthorized - User ID missing"
-      });
-    }
-
-    const [groups] = await connection.query(`
+    
+    const [groups] = await pool.query(`
       SELECT g.*, 
         (SELECT COUNT(*) FROM group_members WHERE group_id = g.id) as member_count
       FROM \`groups\` g
@@ -320,8 +313,7 @@ getUserGroups: async (req, res) => {
     console.error("Get user groups error:", err);
     return res.status(500).json({
       success: 0,
-      message: "Failed to fetch user groups",
-      error: err.message // Include error message for debugging
+      message: "Failed to fetch user groups"
     });
   } finally {
     if (connection) connection.release();
