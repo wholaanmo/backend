@@ -37,7 +37,7 @@ const cors = require('cors')
 
 const allowedOrigins = [
   'https://wholaanmo.github.io',
-  'https://wholaanmo.github.io/VUE-APP',
+  'https://wholaanmo.github.io/moneyy-logg',
   'http://localhost:5173'
 ];
 
