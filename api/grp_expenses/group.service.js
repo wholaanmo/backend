@@ -15,7 +15,7 @@ module.exports = {
       console.log('Generated group code:', groupCode);
 
       const [groupResult] = await connection.query(
-        'INSERT INTO groups (group_name, group_code, created_by) VALUES (?, ?, ?)',
+        'INSERT INTO `groups` (group_name, group_code, created_by) VALUES (?, ?, ?)',
         [groupName, groupCode, userId]
         );
         console.log('Group inserted, ID:', groupResult.insertId);
@@ -59,7 +59,7 @@ module.exports = {
       console.log(`Checking group code: ${groupCode}`);
 
       const [groups] = await connection.query(
-        'SELECT id FROM groups WHERE group_code = ?',
+        'SELECT id FROM `groups` WHERE group_code = ?',
         [groupCode]
       );
       
@@ -97,7 +97,7 @@ module.exports = {
 
   groupExists: async (groupId) => {
     const [rows] = await pool.query(
-      'SELECT 1 FROM groups WHERE id = ? LIMIT 1',
+      'SELECT 1 FROM `groups` WHERE id = ? LIMIT 1',
       [groupId]
     );
     return rows.length > 0;
@@ -148,7 +148,7 @@ module.exports = {
     try {
       const [groups] = await connection.query(`
       SELECT g.id, g.group_name, g.group_code, g.created_at 
-      FROM groups g
+      FROM \`groups\` g
       JOIN group_members gm ON g.id = gm.group_id 
       WHERE gm.user_id = ?
       ORDER BY g.created_at DESC

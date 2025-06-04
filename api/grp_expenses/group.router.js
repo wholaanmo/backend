@@ -35,7 +35,7 @@ router.use((req, res, next) => {
         u.username as admin_name,
         a.username as blocked_by_name
        FROM blocked_members b
-       JOIN groups g ON b.group_id = g.id
+       JOIN \`groups\` g ON b.group_id = g.id
        JOIN users u ON b.user_id = u.id
        JOIN users a ON b.blocked_by = a.id
        WHERE b.user_id = ? AND b.notification_read = 0
@@ -54,7 +54,7 @@ router.use((req, res, next) => {
         u.username as admin_name,
         a.username as removed_by_name
        FROM member_removals r
-       JOIN groups g ON r.group_id = g.id
+       JOIN \`groups\` g ON r.group_id = g.id
        JOIN users u ON r.user_id = u.id
        JOIN users a ON r.removed_by = a.id
        WHERE r.user_id = ? AND r.notification_read = 0
@@ -380,7 +380,7 @@ async (req, res) => {
 
     // First get group ID from code
     const [group] = await pool.query(
-      'SELECT id FROM groups WHERE group_code = ?',
+      'SELECT id FROM `groups` WHERE group_code = ?',
       [groupCode]
     );
 
