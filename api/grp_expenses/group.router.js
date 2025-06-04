@@ -10,11 +10,76 @@ router.use((req, res, next) => {
     next();
   });
 
+  router.get('/user-notifications', checkToken, async (req, res) => {
+    try {
+      const userId = req.user.userId;
+      
+      // Get blocked notifications (no group membership check needed)
+      const [blocked] = await pool.query(
+        `SELECT 
+          b.id,
+          g.id as group_id,
+          g.group_name as groupName,
+          'blocked' as type,
+          b.blocked_at as timestamp,
+          b.reason,
+          u.username as admin_name,
+          a.username as blocked_by_name
+         FROM blocked_members b
+         JOIN groups g ON b.group_id = g.id
+         JOIN users u ON b.user_id = u.id
+         JOIN users a ON b.blocked_by = a.id
+         WHERE b.user_id = ? AND b.notification_read = 0
+         ORDER BY b.blocked_at DESC`,
+        [userId]
+      );
+
+      // Get removal notifications (no group membership check needed)
+      const [removed] = await pool.query(
+        `SELECT 
+          r.id,
+          g.id as group_id,
+          g.group_name as groupName,
+          'removed' as type,
+          r.removed_at as timestamp,
+          r.reason,
+          u.username as admin_name,
+          a.username as removed_by_name
+         FROM member_removals r
+         JOIN groups g ON r.group_id = g.id
+         JOIN users u ON r.user_id = u.id
+         JOIN users a ON r.removed_by = a.id
+         WHERE r.user_id = ? AND r.notification_read = 0
+         ORDER BY r.removed_at DESC`,
+        [userId]
+      );
+
+      const notifications = [...blocked, ...removed]
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+      console.log('Fetched notifications:', notifications); // Add this for debugging
+
+      return res.json({
+        success: 1,
+        notifications
+      });
+    } catch (err) {
+      console.error('Get notifications error:', err);
+      return res.status(500).json({
+        success: 0,
+        message: "Failed to get notifications"
+      });
+    }
+  });
+
   router.post('/test-invite', (req, res) => {
     console.log('Test invite route hit');
     res.json({ success: true });
   });
 
+  router.get('/:groupId/requests', checkToken, groupAuth('admin'), groupController.getPendingRequests);
+router.put('/:groupId/requests/:requestId/approve', checkToken, groupAuth('admin'), groupController.approveRequest);
+router.put('/:groupId/requests/:requestId/reject', checkToken, groupAuth('admin'), groupController.rejectRequest);
 router.post('/create', checkToken, groupController.createGroup);
 router.post('/join', checkToken, groupController.joinGroup);
 router.get('/my-groups', checkToken, groupController.getUserGroups);
@@ -41,47 +106,30 @@ router.get('/:groupId/verify-membership', checkToken, async (req, res) => {
     const { groupId } = req.params;
     const userId = req.user.userId;
 
-    if (!groupId || !userId) {
-      return res.status(400).json({
-        success: 0,
-        message: 'Missing groupId or userId'
-      });
-    }
-
-    // Check direct membership
+    // Check member status
     const [membership] = await pool.query(
-      'SELECT id FROM group_members WHERE group_id = ? AND user_id = ?',
+      'SELECT role, status FROM group_members WHERE group_id = ? AND user_id = ?',
       [groupId, userId]
     );
 
-    // Check pending invites only if not already a member
-    if (membership.length === 0) {
-      const [user] = await pool.query('SELECT email FROM users WHERE id = ?', [userId]);
-      const userEmail = user[0]?.email;
-      
-      if (userEmail) {
-        const [invites] = await pool.query(
-          'SELECT id FROM pending_invites WHERE group_id = ? AND email = ? AND expires_at > NOW()',
-          [groupId, userEmail]
-        );
-        
-        return res.json({
-          success: 1,
-          isMember: invites.length > 0
-        });
-      }
-    }
+    // Check pending requests if not a member
+    const [pendingRequest] = await pool.query(
+      'SELECT id FROM group_join_requests WHERE group_id = ? AND user_id = ? AND status = "pending"',
+      [groupId, userId]
+    );
 
     return res.json({
       success: 1,
-      isMember: membership.length > 0
+      isMember: membership.length > 0,
+      role: membership[0]?.role || null,
+      status: membership[0]?.status || null,
+      hasPendingRequest: pendingRequest.length > 0
     });
   } catch (err) {
     console.error('Verify membership error:', err);
     return res.status(500).json({
       success: 0,
-      message: 'Failed to verify membership',
-      error: err.message
+      message: 'Failed to verify membership'
     });
   }
 });
@@ -93,6 +141,7 @@ async (req, res) => {
   let connection;
   try {
     const { groupId, memberId } = req.params;
+    const { reason } = req.body;
     const adminId = req.user.userId;
 
     connection = await pool.getConnection();
@@ -138,8 +187,8 @@ async (req, res) => {
 
     // Add to blocked members table
     await connection.query(
-      'INSERT INTO blocked_members (group_id, user_id, blocked_by, blocked_at) VALUES (?, ?, ?, NOW())',
-      [groupId, memberId, adminId]
+      'INSERT INTO blocked_members (group_id, user_id, blocked_by, blocked_at, reason) VALUES (?, ?, ?, NOW(), ?)',
+      [groupId, memberId, adminId, reason || null]
     );
 
     await connection.query('COMMIT');
@@ -248,4 +297,144 @@ async (req, res) => {
   }
 }
 );
+
+router.post('/:groupId/members/:memberId/remove', 
+checkToken,
+groupAuth('admin'),
+async (req, res) => {
+  let connection;
+  try {
+    const { groupId, memberId } = req.params;
+    const { reason } = req.body;
+    const adminId = req.user.userId;
+
+    connection = await pool.getConnection();
+    await connection.query('START TRANSACTION');
+
+    // Verify member exists in group
+    const [member] = await connection.query(
+      'SELECT role FROM group_members WHERE group_id = ? AND user_id = ?',
+      [groupId, memberId]
+    );
+
+    if (!member.length) {
+      await connection.query('ROLLBACK');
+      return res.status(404).json({
+        success: 0,
+        message: "Member not found in this group"
+      });
+    }
+
+    // Prevent removing other admins
+    if (member[0].role === 'admin' && memberId != adminId) {
+      await connection.query('ROLLBACK');
+      return res.status(400).json({
+        success: 0,
+        message: "Cannot remove other admins"
+      });
+    }
+
+    // Add to removal log (create this table if it doesn't exist)
+    await connection.query(
+      'INSERT INTO member_removals (group_id, user_id, removed_by, removed_at, reason) VALUES (?, ?, ?, NOW(), ?)',
+      [groupId, memberId, adminId, reason || null]
+    );
+
+    // Remove member from group
+    await connection.query(
+      'DELETE FROM group_members WHERE group_id = ? AND user_id = ?',
+      [groupId, memberId]
+    );
+
+    await connection.query('COMMIT');
+
+    return res.json({
+      success: 1,
+      message: "Member removed successfully"
+    });
+  } catch (err) {
+    if (connection) await connection.query('ROLLBACK');
+    console.error('Remove member error:', err);
+    return res.status(500).json({
+      success: 0,
+      message: "Failed to remove member"
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+router.get('/groups/check-blocked/:groupCode',
+checkToken,
+async (req, res) => {
+  try {
+    const { groupCode } = req.params;
+    const userId = req.user.userId;
+
+    // First get group ID from code
+    const [group] = await pool.query(
+      'SELECT id FROM groups WHERE group_code = ?',
+      [groupCode]
+    );
+
+    if (!group.length) {
+      return res.status(404).json({
+        success: 0,
+        message: "Group not found"
+      });
+    }
+
+    const groupId = group[0].id;
+
+    // Check if user is blocked
+    const [blocked] = await pool.query(
+      'SELECT reason FROM blocked_members WHERE group_id = ? AND user_id = ?',
+      [groupId, userId]
+    );
+
+    return res.json({
+      success: 1,
+      isBlocked: blocked.length > 0,
+      reason: blocked[0]?.reason || null
+    });
+  } catch (err) {
+    console.error('Check blocked error:', err);
+    return res.status(500).json({
+      success: 0,
+      message: "Failed to check blocked status"
+    });
+  }
+});
+
+// Dismiss notification
+router.delete('/notifications/:id', checkToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Try to update in blocked_members first
+    const [blockedResult] = await pool.query(
+      'UPDATE blocked_members SET notification_read = 1 WHERE id = ?',
+      [id]
+    );
+
+    // If not found in blocked_members, try member_removals
+    if (blockedResult.affectedRows === 0) {
+      await pool.query(
+        'UPDATE member_removals SET notification_read = 1 WHERE id = ?',
+        [id]
+      );
+    }
+
+    return res.json({
+      success: 1,
+      message: "Notification dismissed"
+    });
+  } catch (err) {
+    console.error('Dismiss notification error:', err);
+    return res.status(500).json({
+      success: 0,
+      message: "Failed to dismiss notification"
+    });
+  }
+});
 module.exports = router;

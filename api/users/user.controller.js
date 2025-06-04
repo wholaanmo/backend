@@ -13,11 +13,20 @@ const {
     updateLoginInfo,
     invalidateToken ,
     generateOTP,
+    generateOTP1,
     storeOTP,
+    storeOTP1,
     sendEmail,
     verifyOTP,
+    verifyOTP1,
     clearOTP,
-    updatePassword
+    clearOTP1,
+    updatePassword,
+    sendRegistrationOTP,
+    verifyRegistrationOTP,
+    resendRegistrationOTP,
+    checkCredentials
+
 } = require ("../users/user.service");
 
 const {genSaltSync, hashSync, compareSync } = require("bcrypt");
@@ -25,6 +34,274 @@ const { sign } = require ("jsonwebtoken");
 const pool = require("../../config/database");
 
 module.exports = {
+    completeRegistration: async (req, res) => {
+        try {
+            const { first_name, last_name, username, email, password } = req.body;
+            
+            const salt = genSaltSync(10);
+            const hashedPassword = hashSync(password, salt);
+            
+            const [results] = await pool.execute(
+                'INSERT INTO users (first_name, last_name, username, email, password, is_verified) VALUES (?, ?, ?, ?, ?, ?)',
+                [first_name, last_name, username, email, hashedPassword, 1]
+            );
+            
+            return res.json({
+                success: 1,
+                message: "Registration complete",
+                userId: results.insertId
+            });
+        } catch (err) {
+            console.error(err);
+            return res.status(500).json({
+                success: 0,
+                message: "Registration failed"
+            });
+        }
+    }, 
+
+    checkEmailExistsController: async (req, res) => {
+        try {
+          const { email } = req.body;
+          const exists = await checkEmailExists(email);
+          
+          return res.json({
+            success: 1,
+            exists: exists
+          });
+        } catch (err) {
+          console.error(err);
+          return res.status(500).json({
+            success: 0,
+            message: "Error checking email"
+          });
+        }
+      },
+
+    checkCredentials: async (req, res) => {
+        try {
+          const { email, username } = req.body;
+          
+          if (!email || !username) {
+            return res.status(400).json({
+              success: 0,
+              message: "Email and username are required"
+            });
+          }
+      
+          const usernameExists = await checkUsernameExists(username);
+          if (usernameExists) {
+            return res.json({
+              available: false,
+              message: "Username already exists"
+            });
+          }
+          
+          const emailExists = await checkEmailExists(email);
+          if (emailExists) {
+            return res.json({
+              available: false,
+              message: "Email already exists"
+            });
+          }
+      
+          return res.json({
+            available: true,
+            message: "Credentials available"
+          });
+        } catch (err) {
+          console.error('Check credentials error:', err);
+          return res.status(500).json({
+            success: 0,
+            message: "Failed to check credentials"
+          });
+        }
+      },
+
+    sendRegistrationOTP: async (req, res) => {
+        try {
+        const { email, first_name, last_name, username, password } = req.body;
+        
+        if (!email || !first_name || !last_name || !username || !password) {
+            return res.status(400).json({
+                success: 0,
+                message: "All fields are required"
+            });
+        }
+
+        const emailExists = await checkEmailExists(email);
+        if (emailExists) {
+            return res.status(400).json({
+                success: 0,
+                message: "Email already exists"
+            });
+        }
+            // Generate and store OTP
+            const otp = generateOTP1();
+            await storeOTP1(email, otp);
+            
+ // Send email with OTP
+ const subject = 'Your Money Log Verification Code';
+ const text = `Hello ${first_name},
+
+Thank you for registering with Money Log!
+
+🔐 Your One-Time Password (OTP): ${otp}
+
+This code is valid for the next 15 minutes. 
+Please enter this code to complete your registration.`;
+
+ await sendEmail(email, subject, text);
+
+ // Create a temporary token for the unverified user
+ const tempToken = sign({ email }, "qwe1234", { expiresIn: '15m' });
+
+ return res.json({
+     success: 1,
+     message: "OTP sent to email",
+     tempToken
+ });
+} catch (err) {
+ console.error('Send OTP error:', err);
+ await clearOTP1(email);
+ return res.status(500).json({
+     success: 0,
+     message: "Failed to send OTP",
+     error: err.message
+ });
+}
+},
+
+    verifyRegistrationOTP: async (req, res) => {
+        try {
+            const { otp, first_name, last_name, username, email, password } = req.body;
+            const tempToken = req.headers['authorization']?.split(' ')[1];
+            
+            if (!otp) {
+              return res.status(400).json({
+                success: 0,
+                message: "OTP is required"
+              });
+            }
+        
+            if (!tempToken) {
+              return res.status(400).json({
+                success: 0,
+                message: "Session expired. Please request a new OTP."
+              });
+            }
+        
+            // Verify token
+            let decoded;
+            try {
+              decoded = verify(tempToken, "qwe1234");
+            } catch (err) {
+              console.error('Token verification error:', err);
+              return res.status(401).json({
+                success: 0,
+                message: "Session expired. Please request a new OTP.",
+                error: err.message
+              });
+            }
+        
+            const tokenEmail = decoded.email;
+        
+            // Verify the email matches
+            if (tokenEmail !== email) {
+              return res.status(400).json({
+                success: 0,
+                message: "Email mismatch"
+              });
+            }
+        
+            // Verify OTP
+            const isValid = await verifyOTP1(email, otp);
+            if (!isValid) {
+              return res.status(400).json({
+                success: 0,
+                message: "Invalid or expired OTP"
+              });
+            }
+            
+            // Create the user now that OTP is verified
+            const salt = genSaltSync(10);
+            const hashedPassword = hashSync(password, salt);
+            
+            const [results] = await pool.execute(
+              'INSERT INTO users (first_name, last_name, username, email, password, is_verified) VALUES (?, ?, ?, ?, ?, ?)',
+              [first_name, last_name, username, email, hashedPassword, 1]
+            );
+        
+            if (results.affectedRows === 0) {
+              return res.status(400).json({
+                success: 0,
+                message: "Failed to create user"
+              });
+            }
+        
+            await clearOTP1(email);
+                
+            return res.json({
+              success: 1,
+              message: "Email verified and account created successfully",
+              userId: results.insertId
+            });
+          } catch (err) {
+            console.error('OTP verification error:', err);
+            return res.status(500).json({
+              success: 0,
+              message: "Failed to verify OTP",
+              error: err.message
+            });
+          }
+        },
+    
+        resendRegistrationOTP: async (req, res) => {
+            try {
+              const { email, first_name } = req.body;
+              
+              if (!email) {
+                return res.status(400).json({
+                  success: 0,
+                  message: "Email is required"
+                });
+              }
+          
+              // Generate and store new OTP
+              const otp = generateOTP1();
+              await storeOTP1(email, otp);
+              
+              // Send email with OTP
+              const subject = 'Your New Money Log Verification Code';
+              const text = `Hello ${first_name || 'there'},
+          
+          We've generated a new verification code for your Money Log account.
+          
+          🔐 Your One-Time Password (OTP): ${otp}
+          
+          This code is valid for the next 15 minutes. 
+          Please enter this code in the verification page to complete your registration.`;
+          
+              await sendEmail(email, subject, text);
+          
+              // Create a new temporary token
+              const tempToken = sign({ email }, "qwe1234", { expiresIn: '15m' });
+          
+              return res.json({
+                success: 1,
+                message: "New OTP sent to email",
+                tempToken
+              });
+            } catch (err) {
+              console.error('Resend OTP error:', err);
+              return res.status(500).json({
+                success: 0,
+                message: "Failed to resend OTP",
+                error: err.message
+              });
+            }
+          },
+
     forgotPassword: async (req, res) => {
         try {
             const { email } = req.body;
@@ -474,6 +751,13 @@ login: async (req, res) => {
             });
         }
         
+        if (!results.is_verified) {
+            return res.json({
+                success: 0,
+                message: "Please verify your email first. Check your inbox for the verification link."
+            });
+        }
+
         const isPasswordValid = compareSync(body.password, results.password);
         if (isPasswordValid) {
             const isFirstLogin = await updateLoginInfo(results.id);
@@ -495,7 +779,9 @@ login: async (req, res) => {
                 user: {
                     id: results.id,
                     username: results.username, 
-                    email: results.email
+                    email: results.email,
+                    first_name: results.first_name, // Add this
+                    last_name: results.last_name 
                 },
                 isFirstLogin: isFirstLogin
             });

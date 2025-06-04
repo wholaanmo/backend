@@ -9,7 +9,13 @@ const {
     deleteAccount,
     forgotPassword,
     verifyOTP,
-    resetPasswordWithOTP
+    resetPasswordWithOTP,
+    sendRegistrationOTP,
+    verifyRegistrationOTP,
+    resendRegistrationOTP,
+    checkCredentials,
+    checkEmailExistsController,
+    completeRegistration
 } = require("./user.controller");
 const router = require("express").Router();
 const { checkToken } = require ("../../auth/token_validation");
@@ -26,5 +32,12 @@ router.delete('/', checkToken, deleteAccount);
 router.post('/forgot-password', forgotPassword);
 router.post('/verify-otp', verifyOTP);
 router.post('/reset-password-otp', resetPasswordWithOTP);
+
+router.post('/send-registration-otp', sendRegistrationOTP);
+router.post('/verify-registration-otp', verifyRegistrationOTP);
+router.post('/resend-registration-otp', resendRegistrationOTP);
+router.post('/check-credentials', checkCredentials);
+router.post('/check-email', checkEmailExistsController);
+router.post('/complete-registration', completeRegistration);
 
 module.exports = router;

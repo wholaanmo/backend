@@ -369,69 +369,214 @@ acceptInvite: async (req, res) => {
     }
   },
   
-joinGroup: async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const { groupCode } = req.body;
-
-    // Find group by code
-    const [groups] = await pool.query(
-      'SELECT id FROM groups WHERE group_code = ?',
-      [groupCode]
-    );
-    
-    if (groups.length === 0) {
-      return res.status(404).json({
-        success: 0,
-        message: "Group not found with this code"
-      });
-    }
-    
-    const groupId = groups[0].id;
-    
-const [isBlocked] = await pool.query(
-  'SELECT 1 FROM blocked_members WHERE group_id = ? AND user_id = ?',
-  [groupId, userId]
-);
-
-if (isBlocked.length > 0) {
-  return res.status(403).json({
-    success: 0,
-    message: "You have been blocked from this group"
-  });
-}
-
-    // Check if user is already a member
-    const [existingMembers] = await pool.query(
-      'SELECT id FROM group_members WHERE group_id = ? AND user_id = ?',
-      [groupId, userId]
-    );
-    
-    if (existingMembers.length > 0) {
+  joinGroup: async (req, res) => {
+    try {
+      const userId = req.user.userId;
+      const { groupCode } = req.body;
+  
+      // Find group by code
+      const [groups] = await pool.query(
+        'SELECT id FROM groups WHERE group_code = ?',
+        [groupCode]
+      );
+      
+      if (groups.length === 0) {
+        return res.status(404).json({
+          success: 0,
+          message: "Group not found with this code"
+        });
+      }
+      
+      const groupId = groups[0].id;
+  
+      if (groups[0].created_by === userId) {
+        return res.json({
+          success: 1,
+          message: "You're already the admin of this group",
+          data: { groupId }
+        });
+      }
+      
+      const [isBlocked] = await pool.query(
+        'SELECT 1 FROM blocked_members WHERE group_id = ? AND user_id = ?',
+        [groupId, userId]
+      );
+  
+      if (isBlocked.length > 0) {
+        return res.status(403).json({
+          success: 0,
+          message: "You have been blocked from this group"
+        });
+      }
+  
+      const [existing] = await pool.query(
+        'SELECT id FROM group_join_requests WHERE group_id = ? AND user_id = ? AND status = "pending"',
+        [groupId, userId]
+      );
+  
+      if (existing.length > 0) {
+        return res.json({
+          success: 1,
+          message: "Your join request is pending admin approval",
+          data: { groupId }
+        });
+      }
+  
+      // Create join request only (no member record yet)
+      await pool.query(
+        'INSERT INTO group_join_requests (group_id, user_id, status) VALUES (?, ?, "pending")',
+        [groupId, userId]
+      );
+  
       return res.json({
         success: 1,
-        message: "You're already a member of this group",
+        message: "Join request submitted. Waiting for admin approval.",
         data: { groupId }
+      });
+    } catch (err) {
+      console.error("Join group error:", err);
+      return res.status(500).json({
+        success: 0,
+        message: "Failed to join group"
+      });
+    }
+  },
+
+getPendingRequests: async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const [requests] = await pool.query(`
+      SELECT 
+        r.id, 
+        u.id as user_id, 
+        u.username, 
+        u.email, 
+        r.requested_at
+      FROM group_join_requests r
+      JOIN users u ON r.user_id = u.id
+      WHERE r.group_id = ? AND r.status = 'pending'
+      ORDER BY r.requested_at DESC
+    `, [groupId]);
+    
+    res.json({
+      success: 1,
+      data: requests
+    });
+  } catch (err) {
+    console.error('Get pending requests error:', err);
+    res.status(500).json({
+      success: 0,
+      message: "Failed to fetch pending requests"
+    });
+  }
+},
+
+approveRequest: async (req, res) => {
+  let connection;
+  try {
+    const { requestId, groupId } = req.params;
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    
+    // 1. Get request details
+    const [request] = await connection.query(
+      'SELECT user_id FROM group_join_requests WHERE id = ? AND group_id = ?',
+      [requestId, groupId]
+    );
+    
+    if (request.length === 0) {
+      return res.status(404).json({
+        success: 0,
+        message: "Request not found"
       });
     }
     
-    // Add user as regular member
-    await pool.query(
-      'INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)',
-      [groupId, userId, 'member']
+    const userId = request[0].user_id;
+    
+    // 2. Update request status
+    await connection.query(
+      'UPDATE group_join_requests SET status = "approved" WHERE id = ?',
+      [requestId]
     );
     
-    return res.json({
+    // 3. Add user to group_members
+    await connection.query(
+      'INSERT INTO group_members (group_id, user_id, role, status) VALUES (?, ?, "member", "active")',
+      [groupId, userId]
+    );
+
+    await connection.query(
+      'DELETE FROM group_join_requests WHERE id = ?',
+      [requestId]
+    );
+    
+    
+    await connection.commit();
+    
+    // 4. Get updated requests list
+    const [updatedRequests] = await connection.query(
+      `SELECT r.id, u.username, u.email, r.requested_at
+       FROM group_join_requests r
+       JOIN users u ON r.user_id = u.id
+       WHERE r.group_id = ? AND r.status = 'pending'`,
+      [groupId]
+    );
+    
+    res.json({
       success: 1,
-      message: "Successfully joined group",
-      data: { groupId }
+      message: "Request approved successfully",
+      data: updatedRequests
     });
   } catch (err) {
-    console.error("Join group error:", err);
-    return res.status(500).json({
+    if (connection) await connection.rollback();
+    console.error('Approve request error:', err);
+    res.status(500).json({
       success: 0,
-      message: "Failed to join group"
+      message: "Failed to approve request"
     });
+  } finally {
+    if (connection) connection.release();
+  }
+},
+
+rejectRequest: async (req, res) => {
+  let connection;
+  try {
+    const { requestId, groupId } = req.params;
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    
+    // 1. Delete the request
+    await connection.query(
+      'DELETE FROM group_join_requests WHERE id = ? AND group_id = ?',
+      [requestId, groupId]
+    );
+    
+    await connection.commit();
+    
+    // 2. Get remaining pending requests
+    const [remainingRequests] = await connection.query(
+      `SELECT r.id, u.username, u.email, r.requested_at
+       FROM group_join_requests r
+       JOIN users u ON r.user_id = u.id
+       WHERE r.group_id = ? AND r.status = 'pending'`,
+      [groupId]
+    );
+    
+    res.json({
+      success: 1,
+      message: "Request rejected successfully",
+      data: remainingRequests
+    });
+  } catch (err) {
+    if (connection) await connection.rollback();
+    console.error('Reject request error:', err);
+    res.status(500).json({
+      success: 0,
+      message: "Failed to reject request"
+    });
+  } finally {
+    if (connection) connection.release();
   }
 },
 

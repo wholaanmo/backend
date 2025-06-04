@@ -4,6 +4,48 @@ const nodemailer = require('nodemailer');
 const { genSaltSync, hashSync } = require('bcrypt'); 
 
 module.exports = {
+    generateOTP1: () => {
+        return crypto.randomInt(100000, 999999).toString(); // 6-digit OTP
+    },
+    
+    storeOTP1: async (email, otp) => {
+        const expiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes expiry
+        
+        await pool.execute(
+            'INSERT INTO verification_otps (email, otp, expiry) VALUES (?, ?, ?)',
+            [email, otp, expiry]
+        );
+    },
+    
+    verifyOTP1: async (email, otp) => {
+        const [results] = await pool.execute(
+            'SELECT * FROM verification_otps WHERE email = ? AND otp = ? AND expiry > NOW()',
+            [email, otp]
+        );
+        
+        if (results.length === 0) return false;
+        
+        // Delete the OTP after verification
+        await pool.execute(
+            'DELETE FROM verification_otps WHERE email = ? AND otp = ?',
+            [email, otp]
+        );
+        
+        return true;
+    },
+
+    clearOTP1: async (email) => {
+        try {
+            await pool.execute(
+                'DELETE FROM verification_otps WHERE email = ?',
+                [email]
+            );
+            return true;
+        } catch (error) {
+            throw error;
+        }
+    },
+
     generateOTP: () => {
         return crypto.randomInt(100000, 999999).toString();
     },
@@ -96,27 +138,35 @@ module.exports = {
         try {
             // Create a transporter with more robust configuration
             const transporter = nodemailer.createTransport({
-                service: process.env.EMAIL_SERVICE || 'gmail',
-                host: 'smtp.gmail.com',
-                port: 587,
+                service: process.env.EMAIL_SERVICE,
+                host: process.env.EMAIL_HOST,
+                port: process.env.EMAIL_PORT,
                 secure: false, // true for 465, false for other ports
                 auth: {
                     user: process.env.EMAIL_USER,
                     pass: process.env.EMAIL_PASS
                 },
                 tls: {
-                    rejectUnauthorized: false
+                    rejectUnauthorized: false // for local testing only
                 }
-            });    
-            
-            const mailOptions = {
+            });
+
+ const mailOptions = {
                 from: `"Money Log" <${process.env.EMAIL_USER}>`,
-                to,
-                subject,
-                text,
-                html: `<p>${text.replace(/\n/g, '<br>')}</p>`
+                to: to,
+                subject: subject,
+                text: text,
+                html: `
+                    <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+                        <h2 style="color: #2c3e50;">Money Log Verification</h2>
+                        <p>${text.replace(/\n/g, '</p><p>')}</p>
+                        <p style="margin-top: 20px; font-size: 0.9em; color: #7f8c8d;">
+                            If you didn't request this, please ignore this email.
+                        </p>
+                    </div>
+                `
             };
-            
+
             const info = await transporter.sendMail(mailOptions);
             console.log('Message sent: %s', info.messageId);
             return true;
@@ -243,20 +293,26 @@ module.exports = {
                 throw new Error('Email already exists');
             }
 
+            const salt = genSaltSync(10);
+            userdata.password = hashSync(userdata.password, salt);
+
             const [results] = await pool.execute(
-            'INSERT INTO users (username, email, password, registration_date) values (?,?,?,?)',
-            [
-                userdata.username,
-                userdata.email,
-                userdata.password,
-                userdata.registration_date
-            ]
-            );
-            return results;
-        } catch (error) {
-            throw error;
-        }
-    },
+                'INSERT INTO users (first_name, last_name, username, email, password, registration_date, is_verified) values (?,?,?,?,?,?,?)',
+                [
+                    userdata.first_name,
+                    userdata.last_name,
+                    userdata.username,
+                    userdata.email,
+                    userdata.password,
+                    userdata.registration_date,
+                    0 
+                ]
+                );
+                return results;
+            } catch (error) {
+                throw error;
+            }
+        },
     getUsers: async () => {
         try {
             const [results] = await pool.execute(
@@ -330,7 +386,7 @@ module.exports = {
 
     updateLoginInfo: async (userId) => {
         try {
-            // First get current login count to determine if this is first login
+
             const [user] = await pool.execute(
                 'SELECT login_count FROM users WHERE id = ?', 
                 [userId]
@@ -338,7 +394,6 @@ module.exports = {
             
             const isFirstLogin = user[0].login_count === 0;
             
-            // Update login count and set first login date if needed
             await pool.execute(
                 `UPDATE users 
                  SET login_count = login_count + 1,

@@ -9,21 +9,25 @@ module.exports = (requiredRole) => {
       console.log(`Checking group access for user ${userId} in group ${groupId}`);
 
       const [membership] = await pool.query(
-        'SELECT role FROM group_members WHERE group_id = ? AND user_id = ?',
+        'SELECT role, status FROM group_members WHERE group_id = ? AND user_id = ?',
         [groupId, userId]
       );
       
 
       console.log('Membership check for user', userId, 'in group', groupId, 'result:', membership);
       
-      if (membership.length === 0) {
-        console.log('User not a member of group');
-        return res.status(403).json({ success: 0, message: 'Not a group member' });
+      if (membership.length === 0 || membership[0].status !== 'active') {
+        return res.status(403).json({ 
+          success: 0, 
+          message: 'Not an active group member' 
+        });
       }
       
       if (requiredRole === 'admin' && membership[0].role !== 'admin') {
-        console.log('User lacks admin privileges');
-        return res.status(403).json({ success: 0, message: 'Admin access required' });
+        return res.status(403).json({ 
+          success: 0, 
+          message: 'Admin access required' 
+        });
       }
       
       console.log('Access granted');
