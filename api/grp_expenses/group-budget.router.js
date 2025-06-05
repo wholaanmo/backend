@@ -148,15 +148,25 @@ router.put('/groups/:groupId/members/:memberId/promote',
 
 router.route('/groups/:groupId/contributions')
   .get(groupAuth('member'), async (req, res) => {
+    let connection;
     try {
       const { groupId } = req.params;
+
+      if (isNaN(groupId)) {
+        return res.status(400).json({ 
+          success: 0, 
+          message: 'Invalid group ID' 
+        });
+      }
+      
+      connection = await pool.getConnection();
       
       const [group] = await pool.query('SELECT id FROM groups WHERE id = ?', [groupId]);
       if (!group.length) {
         return res.status(404).json({ success: 0, message: 'Group not found' });
       }
       
-      const [contributions] = await pool.query(
+      const [contributions] = await connection.query(
         `SELECT 
           c.id,
           c.user_id,
@@ -171,10 +181,19 @@ router.route('/groups/:groupId/contributions')
         [groupId]
       );
 
-      return res.json({ success: 1, contributions });
+      return res.json({ 
+        success: 1, 
+        contributions: contributions || [] // Ensure we always return an array
+      });
     } catch (err) {
       console.error('Error fetching contributions:', err);
-      return res.status(500).json({ success: 0, message: 'Failed to fetch contributions' });
+      return res.status(500).json({ 
+        success: 0, 
+        message: 'Failed to fetch contributions',
+        error: err.message // Include error message for debugging
+      });
+    } finally {
+      if (connection) connection.release();
     }
   })
   .post(groupAuth('member'), async (req, res) => {
