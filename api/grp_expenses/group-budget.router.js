@@ -181,7 +181,7 @@ router.post(groupAuth('member'), async (req, res) => {
       const { groupId } = req.params;
       console.log(`Fetching contributions for group ${groupId}`); 
       // Verify group exists
-      const [group] = await pool.query('SELECT id FROM `groups` WHERE id = ?', [groupId]);
+      const [group] = await pool.query('SELECT `id` FROM `groups` WHERE `id` = ?', [groupId]);
     if (!group.length) {
       return res.status(404).json({ success: 0, message: 'Group not found' });
     }
