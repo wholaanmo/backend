@@ -25,7 +25,7 @@ exports.getExpensesByMember = async (req, res) => {
 
   exports.addGroupExpense = async (req, res) => {
     try {
-      const { item_price, expense_type, item_name } = req.body;
+      const { item_price, expense_type, item_name, note } = req.body;
       const userId = req.user.userId;
       const groupId = req.params.groupId;
   
@@ -52,7 +52,8 @@ exports.getExpensesByMember = async (req, res) => {
         group_id: groupId,
         item_price,
         expense_type,
-        item_name
+        item_name,
+        note
       });
   
       return res.status(200).json({
@@ -72,7 +73,7 @@ exports.getExpensesByMember = async (req, res) => {
   // Edit an existing group expense
   exports.editGroupExpense = async (req, res) => {
     try {
-      const { item_price, expense_type, item_name } = req.body;
+      const { item_price, expense_type, item_name, note } = req.body;
       const { groupId, expenseId } = req.params;
       const userId = req.user.userId;
       const expense = await groupExpenseService.getGroupExpenseById(expenseId);
@@ -88,7 +89,8 @@ exports.getExpensesByMember = async (req, res) => {
             group_id: groupId,
             item_price,
             expense_type,
-            item_name
+            item_name,
+            note: note
         });
 
         return res.json({
@@ -160,6 +162,7 @@ exports.deleteGroupExpense = async (req, res) => {
           ge.item_price,
           ge.expense_type,
           ge.expense_date,  
+          ge.note,
           ge.user_id,
           ge.group_id,
           u.username

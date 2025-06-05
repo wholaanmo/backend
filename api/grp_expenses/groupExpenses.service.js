@@ -10,6 +10,7 @@ const GroupExpenseService = {
           ge.item_price,
           ge.expense_type,
           ge.expense_date,
+          ge.note,
           ge.user_id,
           ge.group_id,
           u.username
@@ -55,14 +56,15 @@ addGroupExpense: async (expenseData) => {
     // Insert expense
     const [result] = await connection.query(
       `INSERT INTO group_expenses 
-      (user_id, group_id, item_name, item_price, expense_type, expense_date)
-      VALUES (?, ?, ?, ?, ?, NOW())`,
+      (user_id, group_id, item_name, item_price, expense_type, note, expense_date)
+      VALUES (?, ?, ?, ?, ?, ?, NOW())`,
       [
         expenseData.userId,
         expenseData.group_id,
         expenseData.item_name,
         expenseData.item_price,
-        expenseData.expense_type
+        expenseData.expense_type,
+        expenseData.note
       ]
     );
 
@@ -94,12 +96,14 @@ addGroupExpense: async (expenseData) => {
         `UPDATE group_expenses SET
         item_name = ?,
         item_price = ?,
-        expense_type = ?
+        expense_type = ?,
+        note = ?
         WHERE id = ?`,
         [
           expenseData.item_name,
           expenseData.item_price,
           expenseData.expense_type,
+          expenseData.note,
           expenseData.id
         ]
       );
