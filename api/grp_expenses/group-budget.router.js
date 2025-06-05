@@ -225,7 +225,7 @@ router.route('/groups/:groupId/contributions')
         c.amount,
         DATE_FORMAT(c.created_at, '%Y-%m-%d') as date,
         c.status,
-        c.group_id  // Make sure this is included
+        c.group_id  
        FROM contributions c
        JOIN users u ON c.user_id = u.id
        WHERE c.group_id = ?
