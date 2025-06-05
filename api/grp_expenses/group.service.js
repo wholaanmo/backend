@@ -23,9 +23,10 @@ module.exports = {
         const groupId = groupResult.insertId;
       
         await connection.query(
-          'INSERT INTO group_members (group_id, user_id, role) VALUES (?, ?, ?)',
-          [groupId, userId, 'admin']
+          'INSERT INTO group_members (group_id, user_id, role, status) VALUES (?, ?, ?, ?)',
+          [groupId, userId, 'admin', 'active']
         );
+        
         console.log('Admin membership created');
       
       await connection.commit();
